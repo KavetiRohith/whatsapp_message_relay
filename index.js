@@ -5,7 +5,7 @@ const { Client, LocalAuth, MessageAck } = require("whatsapp-web.js");
 
 const myJobQueue = new Queue("WAWEB", "redis://127.0.0.1:6379");
 
-async function setupWhatsapp() {
+async function setupWhatsappAndJobQueue() {
     await myJobQueue.pause()
 
     const client = new Client({
@@ -56,37 +56,33 @@ async function setupWhatsapp() {
 
     myJobQueue.process(async (job) => {
         console.log(job.data)
-        await sendWhatsAppMessage(client, job.data.mobile_no_string, job.data.message)
-    })
+        const { mobile_no_string, message } = job.data
 
-}
+        try {
+            const isRegistered = await client.isRegisteredUser(mobile_no_string);
 
+            if (isRegistered) {
+                const sendMessageData = await client.sendMessage(mobile_no_string, message);
+                if (sendMessageData.ack != MessageAck.ACK_ERROR) {
+                    console.log(`Sent Message Whatsapp for Mobile: ${mobile_no_string} Message: ${message}`)
+                } else {
+                    console.log(`Received Error: ${sendMessageData.ack.toString()} Acknowledgement while sending ${message} to ${mobile_no_string}`)
+                }
 
-async function sendWhatsAppMessage(client, mobile_no_string, message) {
-    try {
-        const isRegistered = await client.isRegisteredUser(mobile_no_string);
-
-        if (isRegistered) {
-            const sendMessageData = await client.sendMessage(mobile_no_string, message);
-            if (sendMessageData.ack != MessageAck.ACK_ERROR) {
-                console.log(`Sent Message Whatsapp for Mobile: ${mobile_no_string} Message: ${message}`)
             } else {
-                console.log(`Received Error: ${sendMessageData.ack.toString()} Acknowledgement while sending ${message} to ${mobile_no_string}`)
+                console.log(`No Whatsapp User with Mobile number ${mobile_no_string} unable to send Message: ${message}`)
             }
-
-        } else {
-            console.log(`No Whatsapp User with Mobile number ${mobile_no} unable to send Message: ${message}`)
+        } catch (err) {
+            console.log(`Unable to send Message: ${message} to Mobile number ${mobile_no_string}`)
+            console.error(err)
         }
-    } catch (err) {
-        console.log(`Unable to send Message: ${message} to Mobile number ${mobile_no}`)
-        console.error(err)
-    }
+    })
 }
 
 
 (async function () {
     // You can use await inside this function block
-    await setupWhatsapp()
+    await setupWhatsappAndJobQueue()
 
     const app = express();
     const port = process.env.WHATSAPP_GATEWAY_PORT | 3676;
@@ -114,7 +110,7 @@ async function sendWhatsAppMessage(client, mobile_no_string, message) {
 
             await myJobQueue.add({ mobile_no_string, message });
 
-            return res.status(202).json({ "description": "Job in queue !" });
+            return res.status(202).json({ "description": "Message in queue !" });
 
         } catch (err) {
             console.error(err)
